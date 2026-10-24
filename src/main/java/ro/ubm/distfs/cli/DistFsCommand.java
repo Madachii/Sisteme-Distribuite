@@ -10,7 +10,7 @@ import java.util.concurrent.Callable;
 @Command(
         name = "DistFS",
         description = "Distributed file system",
-        subcommands = NodeCommand.class
+        subcommands = { NodeCommand.class, ClientCommand.class }
 )
 public final class DistFsCommand implements Callable<Integer> {
 

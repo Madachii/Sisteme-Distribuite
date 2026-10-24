@@ -28,10 +28,7 @@ public final class StorageNode implements AutoCloseable {
             throw e;
         }
 
-        System.out.printf("[node %s] ready%n", config.self().id());
-        System.out.printf("[tcp] listening on %s:%d%n",
-                config.self().host(), config.self().tcpPort());
-        System.out.printf("[udp] multicast port %d%n", config.multicastPort());
+        System.out.println(config);
     }
 
     private void bindSockets() throws IOException {
