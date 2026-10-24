@@ -34,6 +34,9 @@ public final class NodeCommand implements Callable<Integer> {
     @Option(names = "--udp-port", required = true, description = "UDP port")
     private int udpPort;
 
+    @Option(names = "--coordinator", description = "Mark this node as the coordinator (testing only)")
+    private boolean coordinator;
+
     @Override
     public Integer call() {
         try {
@@ -42,7 +45,7 @@ public final class NodeCommand implements Callable<Integer> {
                     host,
                     tcpPort
             );
-            NodeConfig config = new NodeConfig(self, udpPort);
+            NodeConfig config = new NodeConfig(self, udpPort, coordinator);
             startNode(config);
             return 0;
         } catch (IllegalArgumentException e) {
@@ -61,12 +64,7 @@ public final class NodeCommand implements Callable<Integer> {
     private static void startNode(NodeConfig config) throws IOException, InterruptedException {
         StorageNode node = new StorageNode(config);
         node.start();
-        System.out.printf(
-                "Node %s is running on %s:%d. Press Ctrl+C to stop.%n",
-                config.self().id(),
-                config.self().host(),
-                config.self().tcpPort()
-        );
+        System.out.println("Press Ctrl+C to stop.");
 
         // Keep the process alive until Ctrl+C.
         new CountDownLatch(1).await();

@@ -5,7 +5,7 @@ import ro.ubm.distfs.common.NodeInfo;
 import java.util.Objects;
 
 
-public record NodeConfig(NodeInfo self, int multicastPort) {
+public record NodeConfig(NodeInfo self, int multicastPort, boolean coordinator) {
 
     public NodeConfig {
         Objects.requireNonNull(self, "self");
