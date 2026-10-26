@@ -22,7 +22,6 @@ import java.util.concurrent.TimeUnit;
  */
 public final class Discovery implements AutoCloseable {
 
-    public static final String GROUP = "239.255.42.99";
     public static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(2);
 
     private static final int MAX_DATAGRAM = 512;
@@ -35,11 +34,11 @@ public final class Discovery implements AutoCloseable {
     private ScheduledExecutorService scheduler;
     private Thread receiver;
 
-    public Discovery(NodeConfig config, MulticastSocket socket, Membership membership) throws IOException {
+    public Discovery(NodeConfig config, MulticastSocket socket, Membership membership) {
         this.config = config;
         this.socket = socket;
         this.membership = membership;
-        this.group = new InetSocketAddress(InetAddress.getByName(GROUP), config.multicastPort());
+        this.group = new InetSocketAddress(config.multicastGroup(), config.multicastPort());
     }
 
     public void start() throws IOException {
@@ -67,7 +66,7 @@ public final class Discovery implements AutoCloseable {
             socket.setTimeToLive(1);
             socket.joinGroup(group, iface);
         } catch (IOException e) {
-            throw new IOException("Could not join multicast group " + GROUP + " on " + iface.getName(), e);
+            throw new IOException("Could not join multicast group " + config.multicastGroup().getHostAddress() + " on " + iface.getName(), e);
         }
     }
 
