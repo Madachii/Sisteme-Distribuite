@@ -12,7 +12,7 @@ import java.security.MessageDigest;
 import java.util.UUID;
 
 /**
- * Stores file contents on local disk, one file per ID.
+ * Stores file contents on local disk as {@code data/<nodeId>/<fileId>}.
  */
 public final class FileStore {
 

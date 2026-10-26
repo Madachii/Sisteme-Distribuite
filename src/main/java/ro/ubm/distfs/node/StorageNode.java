@@ -4,11 +4,10 @@ import ro.ubm.distfs.common.Protocol;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.MulticastSocket;
 import java.net.ServerSocket;
@@ -18,15 +17,17 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 /**
- * A storage node. Opens its two ports and serves PUT/GET over TCP.
- * Membership and discovery will be added later.
+ * A storage node. It opens its two ports, discovers the other nodes over UDP multicast
+ * and serves PUT/GET over TCP.
  */
 public final class StorageNode implements AutoCloseable {
 
     private final NodeConfig config;
+    private final Membership membership = new Membership();
 
     private ServerSocket tcpSocket;
     private MulticastSocket udpSocket;
+    private Discovery discovery;
     private FileStore store;
 
     public StorageNode(NodeConfig config) {
@@ -35,16 +36,22 @@ public final class StorageNode implements AutoCloseable {
 
     public void start() throws IOException {
         try {
-            store = new FileStore(Path.of("data", "node-" + config.self().tcpPort()));
+            store = new FileStore(Path.of("data", config.self().id().toString()));
             bindSockets();
+            discovery = new Discovery(config, udpSocket, membership);
+            discovery.start();
         } catch (IOException e) {
-            closeSockets();
+            close();
             throw e;
         }
 
         ServerSocket server = tcpSocket;
         Thread.ofPlatform().name("tcp-accept").start(() -> acceptLoop(server));
         System.out.println(config);
+    }
+
+    public Membership membership() {
+        return membership;
     }
 
     private void acceptLoop(ServerSocket server) {
@@ -62,17 +69,14 @@ public final class StorageNode implements AutoCloseable {
 
     private void handle(Socket socket) {
         try (socket;
-             DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
-             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()))) {
+             InputStream in = new BufferedInputStream(socket.getInputStream());
+             OutputStream out = new BufferedOutputStream(socket.getOutputStream())) {
 
-            String type = in.readUTF();
-            switch (type) {
-                case Protocol.PUT -> handlePut(in, out);
-                case Protocol.GET -> handleGet(in, out);
-                default -> {
-                    out.writeUTF(Protocol.ERROR);
-                    out.writeUTF("Unknown message: " + type);
-                }
+            String[] request = Protocol.readLine(in).split(" ");
+            switch (request[0]) {
+                case Protocol.PUT -> handlePut(request, in, out);
+                case Protocol.GET -> handleGet(request, out);
+                default -> error(out, "Unknown message: " + request[0]);
             }
             out.flush();
         } catch (EOFException e) {
@@ -82,60 +86,70 @@ public final class StorageNode implements AutoCloseable {
         }
     }
 
-    private void handlePut(DataInputStream in, DataOutputStream out) throws IOException {
-        String rawId = in.readUTF();
-        String name = in.readUTF();
-        long size = in.readLong();
-        String checksum = in.readUTF();
-        in.readUTF(); // TODO: forward to the next node as REPLICATE
+    // PUT <fileId> <name> <size> <sha256> [<nextHost:port>]
+    private void handlePut(String[] request, InputStream in, OutputStream out) throws IOException {
+        if (request.length != 5 && request.length != 6) {
+            error(out, "Usage: PUT <fileId> <name> <size> <sha256> [<nextNode>]");
+            return;
+        }
+        // TODO: forward to request[5] as REPLICATE
 
         UUID id;
+        long size;
         try {
-            id = UUID.fromString(rawId);
+            id = UUID.fromString(request[1]);
+            size = Long.parseLong(request[3]);
         } catch (IllegalArgumentException e) {
-            out.writeUTF(Protocol.ERROR);
-            out.writeUTF("Invalid id: " + rawId);
+            error(out, "Invalid id or size");
             return;
         }
-        if (size < 0) {
-            out.writeUTF(Protocol.ERROR);
-            out.writeUTF("Invalid size: " + size);
+        String name = request[2];
+        if (size < 0 || !Protocol.isValidName(name)) {
+            error(out, "Invalid name or size");
             return;
         }
 
         try {
-            store.write(id, in, size, checksum);
+            store.write(id, in, size, request[4]);
         } catch (IOException e) {
-            out.writeUTF(Protocol.ERROR);
-            out.writeUTF(e.getMessage());
+            error(out, e.getMessage());
             return;
         }
 
         System.out.printf("[put] stored %s (%s, %d bytes)%n", id, name, size);
-        out.writeUTF(Protocol.STORED);
+        Protocol.writeLine(out, Protocol.STORED);
     }
 
-    private void handleGet(DataInputStream in, DataOutputStream out) throws IOException {
-        String rawId = in.readUTF();
-
-        Path path;
-        try {
-            path = store.find(UUID.fromString(rawId));
-        } catch (IllegalArgumentException e) {
-            path = null;
+    // GET <fileId>
+    private void handleGet(String[] request, OutputStream out) throws IOException {
+        Path path = null;
+        if (request.length == 2) {
+            try {
+                path = store.find(UUID.fromString(request[1]));
+            } catch (IllegalArgumentException e) {
+                // not a UUID, so not stored here
+            }
         }
         if (path == null) {
-            out.writeUTF(Protocol.NOT_FOUND);
+            Protocol.writeLine(out, Protocol.NOT_FOUND);
             return;
         }
 
         long size = Files.size(path);
-        out.writeUTF(Protocol.FILE);
-        out.writeLong(size);
+        String checksum;
+        try (InputStream fileIn = Files.newInputStream(path)) {
+            checksum = Protocol.checksum(fileIn, size);
+        }
+
+        Protocol.writeLine(out, Protocol.FILE, Long.toString(size), checksum);
         try (InputStream fileIn = Files.newInputStream(path)) {
             Protocol.copy(fileIn, out, size, null);
         }
-        System.out.printf("[get] sent %s (%d bytes)%n", rawId, size);
+        System.out.printf("[get] sent %s (%d bytes)%n", request[1], size);
+    }
+
+    private static void error(OutputStream out, String reason) throws IOException {
+        Protocol.writeLine(out, Protocol.ERROR, reason.replace('\n', ' '));
     }
 
     private void bindSockets() throws IOException {
@@ -182,6 +196,10 @@ public final class StorageNode implements AutoCloseable {
 
     @Override
     public void close() {
+        if (discovery != null) {
+            discovery.close();
+            discovery = null;
+        }
         closeSockets();
     }
 }

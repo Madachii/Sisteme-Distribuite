@@ -7,8 +7,11 @@ import ro.ubm.distfs.client.repl.Repl;
 import ro.ubm.distfs.client.repl.ReplCommand;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 
@@ -18,20 +21,25 @@ import java.util.concurrent.Callable;
 )
 public final class ClientCommand implements Callable<Integer> {
 
+    // TODO: hardcoded until ALLOC/LOCATE return the nodes that hold a file.
+    private static final InetSocketAddress NODE = InetSocketAddress.createUnresolved("localhost", 7001);
+
     @Option(names = {"-h", "--help"}, usageHelp = true, description = "Show this help message and exit.")
     private boolean helpRequested;
 
-    // TODO: hardcoded until nodes are found through the coordinator.
-    private final Client client = new Client("localhost");
+    private final Client client = new Client();
+
+    // TODO: remove once LOCATE resolves names through the coordinator.
+    private final Map<String, UUID> uploaded = new HashMap<>();
 
     @Override
     public Integer call() {
         List<ReplCommand> commands = List.of(
                 new ReplCommand("alloc", "alloc <name> <size>", "Allocate storage for a file",
                         args -> System.out.println("alloc: not implemented yet.")),
-                new ReplCommand("put", "put <port> <path>", "Upload a file to a node",
+                new ReplCommand("put", "put <name> <path>", "Upload a file",
                         this::put),
-                new ReplCommand("get", "get <port> <id> <path>", "Download a file from a node",
+                new ReplCommand("get", "get <name|id> <path>", "Download a file",
                         this::get),
                 new ReplCommand("locate", "locate <name|id>", "Find file locations",
                         args -> System.out.println("locate: not implemented yet.")),
@@ -54,37 +62,45 @@ public final class ClientCommand implements Callable<Integer> {
 
     private void put(List<String> args) {
         if (args.size() != 2) {
-            System.out.println("Usage: put <port> <path>");
+            System.out.println("Usage: put <name> <path>");
             return;
         }
+        String name = args.get(0);
         try {
-            int port = Integer.parseInt(args.get(0));
-            UUID id = client.put(port, Path.of(args.get(1)));
-            System.out.println("STORED " + id);
-        } catch (NumberFormatException e) {
-            System.out.println("Invalid port: " + args.get(0));
+            UUID id = client.put(NODE, name, Path.of(args.get(1)));
+            uploaded.put(name, id);
+            System.out.println("STORED " + name + " " + id);
         } catch (IOException e) {
             System.out.println("put failed: " + e.getMessage());
         }
     }
 
     private void get(List<String> args) {
-        if (args.size() != 3) {
-            System.out.println("Usage: get <port> <id> <path>");
+        if (args.size() != 2) {
+            System.out.println("Usage: get <name|id> <path>");
+            return;
+        }
+        UUID id = resolve(args.get(0));
+        if (id == null) {
+            System.out.println("NOT_FOUND " + args.get(0));
             return;
         }
         try {
-            int port = Integer.parseInt(args.get(0));
-            UUID id = UUID.fromString(args.get(1));
-            if (client.get(port, id, Path.of(args.get(2)))) {
-                System.out.println("Saved to " + args.get(2));
+            if (client.get(NODE, id, Path.of(args.get(1)))) {
+                System.out.println("Saved to " + args.get(1));
             } else {
-                System.out.println("NOT_FOUND " + id);
+                System.out.println("NOT_FOUND " + args.get(0));
             }
-        } catch (IllegalArgumentException e) {
-            System.out.println("Invalid port or id: " + e.getMessage());
         } catch (IOException e) {
             System.out.println("get failed: " + e.getMessage());
+        }
+    }
+
+    private UUID resolve(String nameOrId) {
+        try {
+            return UUID.fromString(nameOrId);
+        } catch (IllegalArgumentException e) {
+            return uploaded.get(nameOrId);
         }
     }
 }

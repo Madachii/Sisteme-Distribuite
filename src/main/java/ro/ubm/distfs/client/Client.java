@@ -5,11 +5,10 @@ import ro.ubm.distfs.common.Protocol;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,17 +18,14 @@ import java.util.UUID;
 
 /**
  * Talks to storage nodes over TCP.
- * For now the node is addressed directly by port; ALLOC through the coordinator comes later.
+ * For now the node is given by the caller; ALLOC and LOCATE through the coordinator come later.
  */
 public final class Client {
 
-    private final String host;
-
-    public Client(String host) {
-        this.host = host;
-    }
-
-    public UUID put(int port, Path file) throws IOException {
+    public UUID put(InetSocketAddress node, String name, Path file) throws IOException {
+        if (!Protocol.isValidName(name)) {
+            throw new IOException("Invalid name '" + name + "': no spaces or '/' allowed");
+        }
         if (!Files.isRegularFile(file)) {
             throw new IOException("Not a file: " + file);
         }
@@ -37,59 +33,70 @@ public final class Client {
         // TODO: the ID should come from the coordinator (ALLOC).
         UUID id = UuidCreator.getTimeOrderedEpoch();
         long size = Files.size(file);
-        String checksum = checksum(file);
+        String checksum;
+        try (InputStream fileIn = Files.newInputStream(file)) {
+            checksum = Protocol.checksum(fileIn, size);
+        }
 
-        try (Socket socket = new Socket(host, port);
-             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
-             DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+        try (Socket socket = connect(node);
+             OutputStream out = new BufferedOutputStream(socket.getOutputStream());
+             InputStream in = new BufferedInputStream(socket.getInputStream());
              InputStream fileIn = Files.newInputStream(file)) {
 
-            out.writeUTF(Protocol.PUT);
-            out.writeUTF(id.toString());
-            out.writeUTF(file.getFileName().toString());
-            out.writeLong(size);
-            out.writeUTF(checksum);
-            out.writeUTF(""); // TODO: node for the replica, from ALLOC
+            // TODO: add the node for the replica, from ALLOC
+            Protocol.writeLine(out, Protocol.PUT, id.toString(), name, Long.toString(size), checksum);
             Protocol.copy(fileIn, out, size, null);
             out.flush();
 
-            String reply = in.readUTF();
+            String reply = Protocol.readLine(in);
             if (reply.equals(Protocol.STORED)) {
                 return id;
             }
-            if (reply.equals(Protocol.ERROR)) {
-                throw new IOException("Node refused file: " + in.readUTF());
+            if (reply.startsWith(Protocol.ERROR)) {
+                throw new IOException("Node refused file: " + reply.substring(Protocol.ERROR.length()).strip());
             }
             throw new IOException("Unexpected reply: " + reply);
         }
     }
 
     /**
+     * Saves the file to {@code destination} only if its checksum matches the one sent by the node.
+     *
      * @return false if the node does not have the file
      */
-    public boolean get(int port, UUID id, Path destination) throws IOException {
-        try (Socket socket = new Socket(host, port);
-             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
-             DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream()))) {
+    public boolean get(InetSocketAddress node, UUID id, Path destination) throws IOException {
+        try (Socket socket = connect(node);
+             OutputStream out = new BufferedOutputStream(socket.getOutputStream());
+             InputStream in = new BufferedInputStream(socket.getInputStream())) {
 
-            out.writeUTF(Protocol.GET);
-            out.writeUTF(id.toString());
+            Protocol.writeLine(out, Protocol.GET, id.toString());
             out.flush();
 
-            String reply = in.readUTF();
-            if (reply.equals(Protocol.NOT_FOUND)) {
+            String[] reply = Protocol.readLine(in).split(" ");
+            if (reply[0].equals(Protocol.NOT_FOUND)) {
                 return false;
             }
-            if (!reply.equals(Protocol.FILE)) {
-                throw new IOException("Unexpected reply: " + reply);
+            if (!reply[0].equals(Protocol.FILE) || reply.length != 3) {
+                throw new IOException("Unexpected reply: " + String.join(" ", reply));
             }
+            long size;
+            try {
+                size = Long.parseLong(reply[1]);
+            } catch (NumberFormatException e) {
+                throw new IOException("Invalid size in reply: " + reply[1]);
+            }
+            String expected = reply[2];
 
-            long size = in.readLong();
             Path parent = destination.toAbsolutePath().getParent();
             Path temp = Files.createTempFile(parent, ".distfs-", ".part");
             try {
+                MessageDigest digest = Protocol.newDigest();
                 try (OutputStream fileOut = Files.newOutputStream(temp)) {
-                    Protocol.copy(in, fileOut, size, null);
+                    Protocol.copy(in, fileOut, size, digest);
+                }
+                String actual = Protocol.hex(digest);
+                if (!actual.equalsIgnoreCase(expected)) {
+                    throw new IOException("Checksum mismatch: expected " + expected + ", got " + actual);
                 }
                 Files.move(temp, destination, StandardCopyOption.REPLACE_EXISTING);
             } finally {
@@ -99,11 +106,7 @@ public final class Client {
         }
     }
 
-    private static String checksum(Path file) throws IOException {
-        MessageDigest digest = Protocol.newDigest();
-        try (InputStream in = Files.newInputStream(file)) {
-            Protocol.copy(in, OutputStream.nullOutputStream(), Files.size(file), digest);
-        }
-        return Protocol.hex(digest);
+    private static Socket connect(InetSocketAddress node) throws IOException {
+        return new Socket(node.getHostString(), node.getPort());
     }
 }
