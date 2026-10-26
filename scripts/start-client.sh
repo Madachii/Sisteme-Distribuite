@@ -8,7 +8,7 @@ JAR="target/distfs.jar"
 
 if [[ ! -f "$JAR" ]]; then
     echo "Building $JAR..."
-    mvn -q package -DskipTests
+    ./mvnw -q package -DskipTests
 fi
 
 exec java -jar "$JAR" client "$@"

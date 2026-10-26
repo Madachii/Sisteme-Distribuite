@@ -14,7 +14,7 @@ LOG_DIR="data/logs"
 
 if [[ ! -f "$JAR" ]]; then
     echo "Building $JAR..."
-    mvn -q package -DskipTests
+    ./mvnw -q package -DskipTests
 fi
 
 mkdir -p "$LOG_DIR"
