@@ -95,7 +95,7 @@ Dacă `REPLICATE` eșuează, nodul A răspunde clientului cu `ERROR` și nu trim
 
 ### UDP multicast (nod → toate nodurile)
 
-Toate nodurile, inclusiv coordonatorul, intră în grupul `239.255.42.99` pe portul dat cu `--udp-port`. Fiecare nod trimite la 2 s un heartbeat:
+Toate nodurile, inclusiv coordonatorul, intră în multicast pe portul dat cu `--udp-port`. Fiecare nod trimite la 2 s un heartbeat:
 
 ```
 HEARTBEAT <nodeId> <host> <tcpPort> <role> <freeBytes>
