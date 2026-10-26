@@ -4,15 +4,16 @@ DistFS este un sistem de fișiere distribuit: un coordonator ține metadatele, n
 
 ## 1. Operații
 
-| Operație | Comanda în client | Ce face |
+Operațiile pe care le poate face un utilizator din client. Pașii interni (alocare, replicare, confirmare) sunt descriși în secțiunea 4.
+
+| Operație | Comanda | Ce obține utilizatorul |
 | --- | --- | --- |
-| Alocare | `alloc <name> <size>` | Coordonatorul rezervă un ID pentru fișier și alege 2 noduri cu spațiu suficient. |
-| Încărcare | `put <name> <path>` | Face `alloc`, trimite fișierul la primul nod, care îl replică la al doilea. |
-| Descărcare | `get <id> <path>` | Află nodurile prin `LOCATE` și descarcă de la primul nod care răspunde. Verifică checksum-ul. |
-| Localizare | `locate <name\|id>` | Întoarce metadatele fișierului și nodurile care îl dețin. |
-| Listare | `list [limit] [offset]` | Listează fișierele confirmate, paginat (implicit 100, de la 0). |
-| Ștergere | `del <name\|id>` | Șterge metadatele de la coordonator; nodurile șterg copiile. |
-| Descoperire | `discover` | Listează nodurile cunoscute, cu stare și spațiu liber. |
+| Încărcare | `put <name> <path>` | Fișierul local de la `<path>` este salvat în sistem sub numele `<name>`, în 2 copii. |
+| Descărcare | `get <name\|id> <path>` | Fișierul este salvat local la `<path>`, identic cu cel încărcat. |
+| Localizare | `locate <name\|id>` | Detaliile fișierului (ID, dimensiune, checksum) și nodurile care îl dețin. |
+| Listare | `list [limit] [offset]` | Fișierele din sistem, câte `limit` pe pagină (implicit 100, de la 0). |
+| Ștergere | `del <name\|id>` | Fișierul nu mai există în sistem. |
+| Descoperire | `discover` | Nodurile din cluster, cu stare (`UP`/`DOWN`) și spațiu liber. |
 
 ## 2. Modelul metadatelor
 
@@ -109,6 +110,6 @@ Fiecare nod ascultă grupul și actualizează tabelul de noduri. Dacă nu sosesc
 3. `put raport.pdf ./raport.pdf` încarcă un fișier; `list` îl arată.
 4. `locate raport.pdf` arată cele 2 noduri care îl dețin.
 5. Se oprește cu Ctrl+C unul dintre aceste noduri; în maxim 6 s `discover` îl arată `DOWN`.
-6. `get <id> ./copie.pdf` reușește de la nodul rămas; checksum-ul coincide.
+6. `get raport.pdf ./copie.pdf` reușește de la nodul rămas; checksum-ul coincide.
 7. `put` pentru un fișier nou alege doar noduri `UP`.
 8. `del raport.pdf`; `list` nu îl mai arată, iar `locate` întoarce `NOT_FOUND`.
