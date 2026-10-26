@@ -10,6 +10,7 @@ import ro.ubm.distfs.node.NodeConfig;
 import ro.ubm.distfs.node.StorageNode;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 
@@ -34,6 +35,10 @@ public final class NodeCommand implements Callable<Integer> {
     @Option(names = "--udp-port", required = true, description = "UDP port")
     private int udpPort;
 
+    @Option(names = "--multicast-group", defaultValue = "239.255.42.99",
+            description = "Multicast group for discovery (default: ${DEFAULT-VALUE})")
+    private InetAddress multicastGroup;
+
     @Option(names = "--coordinator", description = "Mark this node as the coordinator (testing only)")
     private boolean coordinator;
 
@@ -45,7 +50,7 @@ public final class NodeCommand implements Callable<Integer> {
                     host,
                     tcpPort
             );
-            NodeConfig config = new NodeConfig(self, udpPort, coordinator);
+            NodeConfig config = new NodeConfig(self, multicastGroup, udpPort, coordinator);
             startNode(config);
             return 0;
         } catch (IllegalArgumentException e) {
