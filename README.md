@@ -46,6 +46,7 @@ java -jar target/distfs.jar node --host localhost --tcp-port 7003 --udp-port 800
 | `--host` | da | Adresa nodului; trebuie să fie adresa unei interfețe de rețea a mașinii. |
 | `--tcp-port` | da | Portul pe care nodul primește conexiuni TCP; diferit pentru fiecare nod de pe aceeași mașină. |
 | `--udp-port` | da | Portul UDP multicast; același pentru toate nodurile din cluster. |
+| `--multicast-group` | nu | Grupul multicast folosit pentru discovery (implicit `239.255.42.99`); același pentru toate nodurile din cluster. |
 | `--coordinator` | nu | Marchează nodul drept coordonator (unul singur în cluster). |
 
 Nodul rulează până la Ctrl+C.
