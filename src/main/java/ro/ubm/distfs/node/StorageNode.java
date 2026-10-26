@@ -6,15 +6,17 @@ import java.net.MulticastSocket;
 import java.net.ServerSocket;
 
 /**
- * A storage node. For now it only holds its identity and opens its two ports.
- * Membership, discovery and file storage will be added later.
+ * A storage node. It opens its two ports and discovers the other nodes over UDP multicast.
+ * File storage will be added later.
  */
 public final class StorageNode implements AutoCloseable {
 
     private final NodeConfig config;
+    private final Membership membership = new Membership();
 
     private ServerSocket tcpSocket;
     private MulticastSocket udpSocket;
+    private Discovery discovery;
 
     public StorageNode(NodeConfig config) {
         this.config = config;
@@ -23,12 +25,18 @@ public final class StorageNode implements AutoCloseable {
     public void start() throws IOException {
         try {
             bindSockets();
+            discovery = new Discovery(config, udpSocket, membership);
+            discovery.start();
         } catch (IOException e) {
-            closeSockets();
+            close();
             throw e;
         }
 
         System.out.println(config);
+    }
+
+    public Membership membership() {
+        return membership;
     }
 
     private void bindSockets() throws IOException {
@@ -75,6 +83,10 @@ public final class StorageNode implements AutoCloseable {
 
     @Override
     public void close() {
+        if (discovery != null) {
+            discovery.close();
+            discovery = null;
+        }
         closeSockets();
     }
 }
