@@ -10,7 +10,7 @@ DistFS: un sistem de fișiere distribuit. Un coordonator ține metadatele, nodur
 
 ## Cerințe
 
-- JDK 23 sau mai nou (`java -version` trebuie să arate cel puțin 23)
+- JDK 25 sau mai nou (`java -version` trebuie să arate cel puțin 25)
 - Maven nu trebuie instalat; proiectul vine cu Maven Wrapper (`mvnw`)
 
 ## Compilare
