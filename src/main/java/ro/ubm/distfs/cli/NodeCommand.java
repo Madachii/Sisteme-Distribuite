@@ -1,27 +1,20 @@
 package ro.ubm.distfs.cli;
 
-import com.github.f4b6a3.uuid.UuidCreator;
 import picocli.CommandLine.Command;
-import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
-import picocli.CommandLine.Spec;
-import ro.ubm.distfs.common.NodeInfo;
+import ro.ubm.distfs.common.Role;
 import ro.ubm.distfs.node.NodeConfig;
 import ro.ubm.distfs.node.StorageNode;
 
 import java.io.IOException;
 import java.net.InetAddress;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CountDownLatch;
 
 @Command(
         name = "node",
         description = "Start a storage node"
 )
 public final class NodeCommand implements Callable<Integer> {
-
-    @Spec
-    private CommandSpec spec;
 
     @Option(names = {"-h", "--help"}, usageHelp = true, description = "Show this help message and exit.")
     private boolean helpRequested;
@@ -43,35 +36,10 @@ public final class NodeCommand implements Callable<Integer> {
     private boolean coordinator;
 
     @Override
-    public Integer call() {
-        try {
-            NodeInfo self = new NodeInfo(
-                    UuidCreator.getTimeOrderedEpoch(),
-                    host,
-                    tcpPort
-            );
-            NodeConfig config = new NodeConfig(self, multicastGroup, udpPort, coordinator);
-            startNode(config);
-            return 0;
-        } catch (IllegalArgumentException e) {
-            System.err.println("Configuration error: " + e.getMessage());
-            spec.commandLine().usage(System.err);
-            return 2;
-        } catch (IOException e) {
-            System.err.println("Startup failed: " + e.getMessage());
-            return 1;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return 1;
-        }
-    }
-
-    private static void startNode(NodeConfig config) throws IOException, InterruptedException {
-        StorageNode node = new StorageNode(config);
-        node.start();
-        System.out.println("Press Ctrl+C to stop.");
-
-        // Keep the process alive until Ctrl+C.
-        new CountDownLatch(1).await();
+    public Integer call() throws IOException, InterruptedException {
+        Role role = coordinator ? Role.COORDINATOR : Role.NODE;
+        NodeConfig config = NodeConfig.create(host, tcpPort, multicastGroup, udpPort, role);
+        new StorageNode(config).run();
+        return 0;
     }
 }

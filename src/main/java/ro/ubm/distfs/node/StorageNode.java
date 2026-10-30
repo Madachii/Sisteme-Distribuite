@@ -1,6 +1,14 @@
 package ro.ubm.distfs.node;
 
 import ro.ubm.distfs.common.Protocol;
+import ro.ubm.distfs.common.message.Error;
+import ro.ubm.distfs.common.message.File;
+import ro.ubm.distfs.common.message.Get;
+import ro.ubm.distfs.common.message.Message;
+import ro.ubm.distfs.common.message.Messages;
+import ro.ubm.distfs.common.message.NotFound;
+import ro.ubm.distfs.common.message.Put;
+import ro.ubm.distfs.common.message.Stored;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -14,7 +22,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * A storage node. It opens its two ports, discovers the other nodes over UDP multicast
@@ -50,6 +58,22 @@ public final class StorageNode implements AutoCloseable {
         System.out.println(config);
     }
 
+    /**
+     * Starts the node and blocks until the process is interrupted or the JVM shuts down.
+     * The node is closed on the way out.
+     */
+    public void run() throws IOException, InterruptedException {
+        start();
+        Runtime.getRuntime().addShutdownHook(new Thread(this::close, "node-shutdown"));
+        System.out.println("Press Ctrl+C to stop.");
+        try {
+            new CountDownLatch(1).await();
+        } catch (InterruptedException e) {
+            close();
+            throw e;
+        }
+    }
+
     public Membership membership() {
         return membership;
     }
@@ -72,11 +96,18 @@ public final class StorageNode implements AutoCloseable {
              InputStream in = new BufferedInputStream(socket.getInputStream());
              OutputStream out = new BufferedOutputStream(socket.getOutputStream())) {
 
-            String[] request = Protocol.readLine(in).split(" ");
-            switch (request[0]) {
-                case Protocol.PUT -> handlePut(request, in, out);
-                case Protocol.GET -> handleGet(request, out);
-                default -> error(out, "Unknown message: " + request[0]);
+            Message request;
+            try {
+                request = Messages.decode(Protocol.readLine(in));
+            } catch (IllegalArgumentException e) {
+                error(out, e.getMessage() != null ? e.getMessage() : "Invalid message");
+                return;
+            }
+
+            switch (request) {
+                case Put put -> handlePut(put, in, out);
+                case Get get -> handleGet(get, out);
+                default -> error(out, "Unknown message: " + request.type());
             }
             out.flush();
         } catch (EOFException e) {
@@ -87,51 +118,25 @@ public final class StorageNode implements AutoCloseable {
     }
 
     // PUT <fileId> <name> <size> <sha256> [<nextHost:port>]
-    private void handlePut(String[] request, InputStream in, OutputStream out) throws IOException {
-        if (request.length != 5 && request.length != 6) {
-            error(out, "Usage: PUT <fileId> <name> <size> <sha256> [<nextNode>]");
-            return;
-        }
-        // TODO: forward to request[5] as REPLICATE
-
-        UUID id;
-        long size;
-        try {
-            id = UUID.fromString(request[1]);
-            size = Long.parseLong(request[3]);
-        } catch (IllegalArgumentException e) {
-            error(out, "Invalid id or size");
-            return;
-        }
-        String name = request[2];
-        if (size < 0 || !Protocol.isValidName(name)) {
-            error(out, "Invalid name or size");
-            return;
-        }
+    private void handlePut(Put put, InputStream in, OutputStream out) throws IOException {
+        // TODO: forward to put.nextNode() as REPLICATE
 
         try {
-            store.write(id, in, size, request[4]);
+            store.write(put.fileId(), in, put.size(), put.checksum());
         } catch (IOException e) {
             error(out, e.getMessage());
             return;
         }
 
-        System.out.printf("[put] stored %s (%s, %d bytes)%n", id, name, size);
-        Protocol.writeLine(out, Protocol.STORED);
+        System.out.printf("[put] stored %s (%s, %d bytes)%n", put.fileId(), put.name(), put.size());
+        Protocol.writeLine(out, new Stored());
     }
 
     // GET <fileId>
-    private void handleGet(String[] request, OutputStream out) throws IOException {
-        Path path = null;
-        if (request.length == 2) {
-            try {
-                path = store.find(UUID.fromString(request[1]));
-            } catch (IllegalArgumentException e) {
-                // not a UUID, so not stored here
-            }
-        }
+    private void handleGet(Get get, OutputStream out) throws IOException {
+        Path path = store.find(get.fileId());
         if (path == null) {
-            Protocol.writeLine(out, Protocol.NOT_FOUND);
+            Protocol.writeLine(out, new NotFound());
             return;
         }
 
@@ -141,15 +146,15 @@ public final class StorageNode implements AutoCloseable {
             checksum = Protocol.checksum(fileIn, size);
         }
 
-        Protocol.writeLine(out, Protocol.FILE, Long.toString(size), checksum);
+        Protocol.writeLine(out, new File(size, checksum));
         try (InputStream fileIn = Files.newInputStream(path)) {
             Protocol.copy(fileIn, out, size, null);
         }
-        System.out.printf("[get] sent %s (%d bytes)%n", request[1], size);
+        System.out.printf("[get] sent %s (%d bytes)%n", get.fileId(), size);
     }
 
     private static void error(OutputStream out, String reason) throws IOException {
-        Protocol.writeLine(out, Protocol.ERROR, reason.replace('\n', ' '));
+        Protocol.writeLine(out, new Error(reason));
     }
 
     private void bindSockets() throws IOException {

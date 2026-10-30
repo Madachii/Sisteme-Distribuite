@@ -16,4 +16,27 @@ public record NodeInfo(UUID id, String host, int tcpPort) {
             throw new IllegalArgumentException("tcpPort must be between 1 and 65535");
         }
     }
+
+    /**
+     * The node fields as they appear in a space-separated protocol message.
+     */
+    public String encode() {
+        return id + " " + host + " " + tcpPort;
+    }
+
+    /**
+     * Reads the three node fields starting at {@code offset}.
+     *
+     * @throws IllegalArgumentException if there are not enough fields or they are malformed
+     */
+    public static NodeInfo decode(String[] parts, int offset) {
+        if (parts.length < offset + 3) {
+            throw new IllegalArgumentException("Expected 3 node fields at offset " + offset);
+        }
+        return new NodeInfo(
+                UUID.fromString(parts[offset]),
+                parts[offset + 1],
+                Integer.parseInt(parts[offset + 2])
+        );
+    }
 }

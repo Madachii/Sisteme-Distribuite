@@ -2,6 +2,14 @@ package ro.ubm.distfs.client;
 
 import com.github.f4b6a3.uuid.UuidCreator;
 import ro.ubm.distfs.common.Protocol;
+import ro.ubm.distfs.common.message.Error;
+import ro.ubm.distfs.common.message.File;
+import ro.ubm.distfs.common.message.Get;
+import ro.ubm.distfs.common.message.Message;
+import ro.ubm.distfs.common.message.Messages;
+import ro.ubm.distfs.common.message.NotFound;
+import ro.ubm.distfs.common.message.Put;
+import ro.ubm.distfs.common.message.Stored;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -13,7 +21,6 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.security.MessageDigest;
 import java.util.UUID;
 
 /**
@@ -44,18 +51,18 @@ public final class Client {
              InputStream fileIn = Files.newInputStream(file)) {
 
             // TODO: add the node for the replica, from ALLOC
-            Protocol.writeLine(out, Protocol.PUT, id.toString(), name, Long.toString(size), checksum);
+            Protocol.writeLine(out, new Put(id, name, size, checksum, null));
             Protocol.copy(fileIn, out, size, null);
             out.flush();
 
-            String reply = Protocol.readLine(in);
-            if (reply.equals(Protocol.STORED)) {
+            Message reply = readMessage(in);
+            if (reply instanceof Stored) {
                 return id;
             }
-            if (reply.startsWith(Protocol.ERROR)) {
-                throw new IOException("Node refused file: " + reply.substring(Protocol.ERROR.length()).strip());
+            if (reply instanceof Error error) {
+                throw new IOException("Node refused file: " + error.reason());
             }
-            throw new IOException("Unexpected reply: " + reply);
+            throw new IOException("Unexpected reply: " + reply.encode());
         }
     }
 
@@ -69,40 +76,40 @@ public final class Client {
              OutputStream out = new BufferedOutputStream(socket.getOutputStream());
              InputStream in = new BufferedInputStream(socket.getInputStream())) {
 
-            Protocol.writeLine(out, Protocol.GET, id.toString());
+            Protocol.writeLine(out, new Get(id));
             out.flush();
 
-            String[] reply = Protocol.readLine(in).split(" ");
-            if (reply[0].equals(Protocol.NOT_FOUND)) {
+            Message reply = readMessage(in);
+            if (reply instanceof NotFound) {
                 return false;
             }
-            if (!reply[0].equals(Protocol.FILE) || reply.length != 3) {
-                throw new IOException("Unexpected reply: " + String.join(" ", reply));
+            if (!(reply instanceof File file)) {
+                throw new IOException("Unexpected reply: " + reply.encode());
             }
-            long size;
-            try {
-                size = Long.parseLong(reply[1]);
-            } catch (NumberFormatException e) {
-                throw new IOException("Invalid size in reply: " + reply[1]);
-            }
-            String expected = reply[2];
+
+            long size = file.size();
+            String expected = file.checksum();
 
             Path parent = destination.toAbsolutePath().getParent();
             Path temp = Files.createTempFile(parent, ".distfs-", ".part");
             try {
-                MessageDigest digest = Protocol.newDigest();
                 try (OutputStream fileOut = Files.newOutputStream(temp)) {
-                    Protocol.copy(in, fileOut, size, digest);
-                }
-                String actual = Protocol.hex(digest);
-                if (!actual.equalsIgnoreCase(expected)) {
-                    throw new IOException("Checksum mismatch: expected " + expected + ", got " + actual);
+                    Protocol.copyVerified(in, fileOut, size, expected);
                 }
                 Files.move(temp, destination, StandardCopyOption.REPLACE_EXISTING);
             } finally {
                 Files.deleteIfExists(temp);
             }
             return true;
+        }
+    }
+
+    private static Message readMessage(InputStream in) throws IOException {
+        String line = Protocol.readLine(in);
+        try {
+            return Messages.decode(line);
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Malformed reply: " + line, e);
         }
     }
 

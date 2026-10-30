@@ -25,3 +25,5 @@ replay_pid*
 /data/
 /target/
 .idea
+
+.playwright-mcp/
