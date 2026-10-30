@@ -1,5 +1,7 @@
 package ro.ubm.distfs.common;
 
+import ro.ubm.distfs.common.message.Message;
+
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
@@ -11,27 +13,23 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
 /**
- * TCP wire format (docs/cerinte.md, section 4): every message is one text line ending in {@code \n},
- * the message name followed by space-separated fields. One request and one response per connection.
+ * Line framing shared by all messages (docs/cerinte.md): one text line ending in {@code \n},
+ * the message name followed by space-separated fields. TCP uses one request and one
+ * response per connection; the heartbeat is a single multicast datagram.
  *
- * PUT <fileId> <name> <size> <sha256> [<nextHost:port>]\n + size bytes
- *       -> STORED | ERROR <reason>
- * GET <fileId>
- *       -> FILE <size> <sha256>\n + size bytes | NOT_FOUND
+ * The message set and its fields are defined by
+ * {@link ro.ubm.distfs.common.message.MessageType} and the {@link Message} records.
  */
 public final class Protocol {
-
-    public static final String PUT = "PUT";
-    public static final String GET = "GET";
-    public static final String STORED = "STORED";
-    public static final String FILE = "FILE";
-    public static final String NOT_FOUND = "NOT_FOUND";
-    public static final String ERROR = "ERROR";
 
     private static final int BUFFER_SIZE = 64 * 1024;
     private static final int MAX_LINE = 8 * 1024;
 
     private Protocol() {
+    }
+
+    public static void writeLine(OutputStream out, Message message) throws IOException {
+        writeLine(out, message.encode());
     }
 
     public static void writeLine(OutputStream out, String... fields) throws IOException {
@@ -97,5 +95,19 @@ public final class Protocol {
         MessageDigest digest = newDigest();
         copy(in, OutputStream.nullOutputStream(), size, digest);
         return hex(digest);
+    }
+
+    /**
+     * Copies exactly {@code size} bytes while hashing them, then checks the result against
+     * {@code expected}. Nothing is written beyond the given stream, so callers can stage the
+     * bytes in a temporary file and only publish them once the checksum matches.
+     */
+    public static void copyVerified(InputStream in, OutputStream out, long size, String expected) throws IOException {
+        MessageDigest digest = newDigest();
+        copy(in, out, size, digest);
+        String actual = hex(digest);
+        if (!actual.equalsIgnoreCase(expected)) {
+            throw new IOException("Checksum mismatch: expected " + expected + ", got " + actual);
+        }
     }
 }

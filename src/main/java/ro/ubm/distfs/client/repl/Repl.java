@@ -6,41 +6,30 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 
 /**
  * Line-oriented REPL that dispatches the first token to a registered command.
  */
-public final class  Repl {
+public final class Repl {
 
-    private final Map<String, ReplCommand> commands;
+    private final CommandRegistry registry;
     private final BufferedReader in;
     private final PrintStream out;
 
-    public Repl(List<ReplCommand> commands) {
+    public Repl(CommandRegistry registry) {
         this(
-                commands,
+                registry,
                 new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8)),
                 System.out
         );
     }
 
-    public Repl(List<ReplCommand> commands, BufferedReader in, PrintStream out) {
-        Objects.requireNonNull(commands, "commands");
+    public Repl(CommandRegistry registry, BufferedReader in, PrintStream out) {
+        this.registry = Objects.requireNonNull(registry, "registry");
         this.in = Objects.requireNonNull(in, "in");
         this.out = Objects.requireNonNull(out, "out");
-
-        Map<String, ReplCommand> indexed = new LinkedHashMap<>();
-        for (ReplCommand command : commands) {
-            if (indexed.putIfAbsent(command.name(), command) != null) {
-                throw new IllegalArgumentException("Duplicate command: " + command.name());
-            }
-        }
-        this.commands = Collections.unmodifiableMap(indexed);
     }
 
     public void run() throws IOException {
@@ -73,20 +62,32 @@ public final class  Repl {
                 continue;
             }
 
-            ReplCommand command = commands.get(name);
+            Command<?> command = registry.find(name).orElse(null);
             if (command == null) {
                 out.printf("Unknown command: %s. Type 'help' for commands.%n", name);
                 continue;
             }
 
-            command.execute(args);
+            execute(command, args, out);
         }
+    }
+
+    private static <T> void execute(Command<T> command, List<String> args, PrintStream out) {
+        T parsed;
+        try {
+            parsed = command.spec().parse(args);
+        } catch (IllegalArgumentException e) {
+            out.println("Usage: " + command.spec().usage());
+            return;
+        }
+        command.execute(parsed, out);
     }
 
     private void printHelp() {
         out.println("Commands:");
-        for (ReplCommand command : commands.values()) {
-            out.printf("  %-28s %s%n", command.usage(), command.description());
+        for (Command<?> command : registry.all()) {
+            CommandSpec<?> spec = command.spec();
+            out.printf("  %-28s %s%n", spec.usage(), spec.description());
         }
         out.printf("  %-28s %s%n", "help", "Show this help");
         out.printf("  %-28s %s%n", "quit", "Exit");

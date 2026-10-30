@@ -8,7 +8,6 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.security.MessageDigest;
 import java.util.UUID;
 
 /**
@@ -28,15 +27,10 @@ public final class FileStore {
     public void write(UUID id, InputStream in, long size, String checksum) throws IOException {
         Path temp = Files.createTempFile(root, id + "-", ".part");
         try {
-            MessageDigest digest = Protocol.newDigest();
             try (OutputStream out = Files.newOutputStream(temp)) {
-                Protocol.copy(in, out, size, digest);
+                Protocol.copyVerified(in, out, size, checksum);
             }
 
-            String actual = Protocol.hex(digest);
-            if (!actual.equalsIgnoreCase(checksum)) {
-                throw new IOException("Checksum mismatch: expected " + checksum + ", got " + actual);
-            }
             Files.move(temp, pathOf(id), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } finally {
             Files.deleteIfExists(temp);

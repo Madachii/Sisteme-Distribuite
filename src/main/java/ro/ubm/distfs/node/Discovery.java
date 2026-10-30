@@ -1,6 +1,7 @@
 package ro.ubm.distfs.node;
 
-import ro.ubm.distfs.common.Heartbeat;
+import ro.ubm.distfs.common.message.Heartbeat;
+import ro.ubm.distfs.common.message.Messages;
 
 import java.io.File;
 import java.io.IOException;
@@ -72,7 +73,7 @@ public final class Discovery implements AutoCloseable {
 
     private void sendHeartbeat() {
         long freeBytes = new File(".").getUsableSpace();
-        byte[] data = new Heartbeat(config.self(), config.coordinator(), freeBytes)
+        byte[] data = new Heartbeat(config.self(), config.role(), freeBytes)
                 .encode()
                 .getBytes(StandardCharsets.UTF_8);
 
@@ -99,7 +100,9 @@ public final class Discovery implements AutoCloseable {
 
             String message = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
             try {
-                membership.onHeartbeat(Heartbeat.decode(message));
+                if (Messages.decode(message) instanceof Heartbeat heartbeat) {
+                    membership.onHeartbeat(heartbeat);
+                }
             } catch (IllegalArgumentException e) {
                 System.err.println("[discovery] ignored datagram from " + packet.getSocketAddress() + ": " + e.getMessage());
             }

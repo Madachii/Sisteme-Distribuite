@@ -1,6 +1,7 @@
 package ro.ubm.distfs.node;
 
-import ro.ubm.distfs.common.Heartbeat;
+import ro.ubm.distfs.common.Role;
+import ro.ubm.distfs.common.message.Heartbeat;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -66,7 +67,7 @@ public final class Membership {
                 heartbeat.node().id(),
                 heartbeat.node().host(),
                 heartbeat.node().tcpPort(),
-                heartbeat.coordinator() ? " (coordinator)" : "",
+                heartbeat.role() == Role.COORDINATOR ? " (coordinator)" : "",
                 health);
     }
 }
