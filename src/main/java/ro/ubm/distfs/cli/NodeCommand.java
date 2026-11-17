@@ -8,6 +8,7 @@ import ro.ubm.distfs.node.StorageNode;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.time.Duration;
 import java.util.concurrent.Callable;
 
 @Command(
@@ -35,10 +36,19 @@ public final class NodeCommand implements Callable<Integer> {
     @Option(names = "--coordinator", description = "Mark this node as the coordinator (testing only)")
     private boolean coordinator;
 
+    @Option(names = "--suspect", defaultValue = "4000",
+            description = "Silence in ms after which a node is marked SUSPECT (default: ${DEFAULT-VALUE})")
+    private long suspectMs;
+
+    @Option(names = "--fail", defaultValue = "6000",
+            description = "Silence in ms after which a node is marked CAZUT (default: ${DEFAULT-VALUE})")
+    private long failMs;
+
     @Override
     public Integer call() throws IOException, InterruptedException {
         Role role = coordinator ? Role.COORDINATOR : Role.NODE;
-        NodeConfig config = NodeConfig.create(host, tcpPort, multicastGroup, udpPort, role);
+        NodeConfig config = NodeConfig.create(host, tcpPort, multicastGroup, udpPort, role,
+                Duration.ofMillis(suspectMs), Duration.ofMillis(failMs));
         new StorageNode(config).run();
         return 0;
     }

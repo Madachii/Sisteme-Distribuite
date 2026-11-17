@@ -31,7 +31,7 @@ import java.util.concurrent.CountDownLatch;
 public final class StorageNode implements AutoCloseable {
 
     private final NodeConfig config;
-    private final Membership membership = new Membership();
+    private final Membership membership;
 
     private ServerSocket tcpSocket;
     private MulticastSocket udpSocket;
@@ -40,6 +40,7 @@ public final class StorageNode implements AutoCloseable {
 
     public StorageNode(NodeConfig config) {
         this.config = config;
+        this.membership = new Membership(config.suspectAfter(), config.failAfter());
     }
 
     public void start() throws IOException {
