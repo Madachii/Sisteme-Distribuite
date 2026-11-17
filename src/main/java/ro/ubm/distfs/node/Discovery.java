@@ -25,6 +25,9 @@ public final class Discovery implements AutoCloseable {
 
     public static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(2);
 
+    // How often the membership table is checked for silent nodes; adds at most this much to the detection time.
+    public static final Duration SWEEP_INTERVAL = Duration.ofMillis(100);
+
     private static final int MAX_DATAGRAM = 512;
 
     private final NodeConfig config;
@@ -51,7 +54,8 @@ public final class Discovery implements AutoCloseable {
                 Thread.ofPlatform().name("discovery-scheduler").daemon().factory()
         );
         scheduler.scheduleAtFixedRate(this::sendHeartbeat, 0, HEARTBEAT_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
-        scheduler.scheduleAtFixedRate(membership::sweep, 1, 1, TimeUnit.SECONDS);
+        scheduler.scheduleAtFixedRate(membership::sweep,
+                SWEEP_INTERVAL.toMillis(), SWEEP_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
     }
 
     // Uses the interface that owns --host, so nodes started on localhost talk over loopback.

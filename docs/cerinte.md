@@ -13,7 +13,7 @@ Operațiile pe care le poate face un utilizator din client. Pașii interni (aloc
 | Localizare | `locate <name\|id>` | Detaliile fișierului (ID, dimensiune, checksum) și nodurile care îl dețin. |
 | Listare | `list [limit] [offset]` | Fișierele din sistem, câte `limit` pe pagină (implicit 100, de la 0). |
 | Ștergere | `del <name\|id>` | Fișierul nu mai există în sistem. |
-| Descoperire | `discover` | Nodurile din cluster, cu stare (`UP`/`DOWN`) și spațiu liber. |
+| Descoperire | `discover` | Nodurile din cluster, cu stare (`ACTIV`/`SUSPECT`/`CAZUT`) și spațiu liber. |
 
 ## 2. Modelul metadatelor
 
@@ -40,7 +40,7 @@ Un fișier `PENDING` care nu primește `COMMIT` în 60 s este șters. Doar fiși
 | `role` | `NODE` / `COORDINATOR` | Momentan setat cu `--coordinator`. |
 | `freeBytes` | long | Spațiul liber raportat în ultimul heartbeat. |
 | `lastSeen` | timestamp | Momentul ultimului heartbeat primit. |
-| `health` | `UP` / `DOWN` | `DOWN` dacă `lastSeen` e mai vechi de 6 s. |
+| `health` | `ACTIV` / `SUSPECT` / `CAZUT` | `SUSPECT` dacă `lastSeen` e mai vechi de `--suspect` ms (implicit 4000), `CAZUT` dacă e mai vechi de `--fail` ms (implicit 6000). Orice heartbeat nou îl readuce `ACTIV`. |
 
 ### Stocare pe disc
 
@@ -51,7 +51,7 @@ Fiecare nod scrie fișierele în `data/<nodeId>/<fileId>`. Metadatele de la coor
 | Cerință | Obiectiv măsurabil | Cum se verifică |
 | --- | --- | --- |
 | Toleranță la defecte | `GET` reușește cu oricare un nod de stocare oprit. | În demo se oprește un nod care deține fișierul, apoi se face `get`. |
-| Detectarea defectelor | Un nod oprit apare `DOWN` la `discover` în maxim 6 s. | Se cronometrează de la Ctrl+C pe nod până la schimbarea stării. |
+| Detectarea defectelor | Un nod oprit apare `CAZUT` la `discover` în maxim 6 s. | Se cronometrează de la Ctrl+C pe nod până la schimbarea stării. |
 | Integritate | 100% din fișierele descărcate au același SHA-256 ca originalul. | Clientul compară checksum-ul; se verifică și cu `sha256sum`. |
 | Performanță la transfer | `put` + `get` pentru un fișier de 10 MB pe localhost în sub 2 s fiecare. | Se măsoară timpul comenzilor în client. |
 | Performanță la metadate | `list` cu 1000 de fișiere răspunde în sub 200 ms. | Se încarcă 1000 de fișiere mici și se măsoară `list`. |
@@ -101,15 +101,21 @@ Toate nodurile, inclusiv coordonatorul, intră în grupul multicast dat cu `--mu
 HEARTBEAT <nodeId> <host> <tcpPort> <role> <freeBytes>
 ```
 
-Fiecare nod ascultă grupul și actualizează tabelul de noduri. Dacă nu sosesc 3 heartbeat-uri la rând (6 s), nodul este marcat `DOWN`. Coordonatorul răspunde la `DISCOVER` din acest tabel și alege la `ALLOC` doar noduri `UP` cu `freeBytes` cel puțin cât dimensiunea fișierului.
+Fiecare nod ascultă grupul și actualizează tabelul de noduri (membership), pe care îl verifică la fiecare 100 ms. Un nod trece prin trei stări:
+
+- `ACTIV`: heartbeat-urile lui sosesc;
+- `SUSPECT`: nu a sosit niciun heartbeat de `--suspect` ms (implicit 4000, adică 2 heartbeat-uri pierdute);
+- `CAZUT`: nu a sosit niciun heartbeat de `--fail` ms (implicit 6000, adică 3 heartbeat-uri pierdute).
+
+Orice heartbeat nou readuce nodul în `ACTIV`. Un nod repornit are alt ID, deci un nod `CAZUT` care revine cu același ID nu a căzut de fapt (a fost înghețat sau s-au pierdut pachete), iar declarația a fost greșită. Coordonatorul răspunde la `DISCOVER` din acest tabel și alege la `ALLOC` doar noduri `ACTIV` cu `freeBytes` cel puțin cât dimensiunea fișierului.
 
 ## 5. Scenariul demonstrației
 
 1. Se pornesc coordonatorul și 3 noduri cu `scripts/start-local.sh`.
-2. În client, `discover` arată cele 3 noduri `UP`.
+2. În client, `discover` arată cele 3 noduri `ACTIV`.
 3. `put raport.pdf ./raport.pdf` încarcă un fișier; `list` îl arată.
 4. `locate raport.pdf` arată cele 2 noduri care îl dețin.
-5. Se oprește cu Ctrl+C unul dintre aceste noduri; în maxim 6 s `discover` îl arată `DOWN`.
+5. Se oprește cu Ctrl+C unul dintre aceste noduri; după 4 s `discover` îl arată `SUSPECT`, iar în maxim 6 s `CAZUT`.
 6. `get raport.pdf ./copie.pdf` reușește de la nodul rămas; checksum-ul coincide.
-7. `put` pentru un fișier nou alege doar noduri `UP`.
+7. `put` pentru un fișier nou alege doar noduri `ACTIV`.
 8. `del raport.pdf`; `list` nu îl mai arată, iar `locate` întoarce `NOT_FOUND`.
