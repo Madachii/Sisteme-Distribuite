@@ -8,6 +8,7 @@ public final class Main {
 
     public static void main(String[] args) {
         System.exit(new CommandLine(new DistFsCommand())
+                .setCaseInsensitiveEnumValuesAllowed(true)
                 .setExecutionExceptionHandler(new CliErrorHandler())
                 .execute(args));
     }

@@ -16,9 +16,7 @@ public record Stored() implements Message {
     }
 
     static Stored decode(String body) {
-        if (!body.isEmpty()) {
-            throw new IllegalArgumentException("STORED takes no fields, got: " + body);
-        }
+        FieldReader.expectEmpty(MessageType.STORED, body);
         return new Stored();
     }
 }

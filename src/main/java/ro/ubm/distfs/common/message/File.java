@@ -25,10 +25,7 @@ public record File(long size, String checksum) implements Message {
     }
 
     static File decode(String body) {
-        String[] parts = body.split(" ");
-        if (parts.length != 2) {
-            throw new IllegalArgumentException("FILE needs 2 fields, got " + parts.length);
-        }
-        return new File(Long.parseLong(parts[0]), parts[1]);
+        FieldReader reader = new FieldReader(MessageType.FILE, body, 2, 2);
+        return new File(reader.nextLong(), reader.nextString());
     }
 }

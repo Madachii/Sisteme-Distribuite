@@ -22,6 +22,7 @@ public record Error(String reason) implements Message {
     }
 
     static Error decode(String body) {
-        return new Error(body);
+        FieldReader reader = new FieldReader(MessageType.ERROR, body, 0, Integer.MAX_VALUE);
+        return new Error(reader.nextRest());
     }
 }

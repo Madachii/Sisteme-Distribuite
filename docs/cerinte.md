@@ -37,7 +37,7 @@ Un fișier `PENDING` care nu primește `COMMIT` în 60 s este șters. Doar fiși
 | --- | --- | --- |
 | `id` | UUID v7 | Generat la pornirea nodului (`NodeInfo`). |
 | `host`, `tcpPort` | string, int | Adresa la care nodul primește conexiuni TCP. |
-| `role` | `NODE` / `COORDINATOR` | Momentan setat cu `--coordinator`. |
+| `role` | `NODE` / `COORDINATOR` | Setat cu `--role` (implicit `NODE`). |
 | `freeBytes` | long | Spațiul liber raportat în ultimul heartbeat. |
 | `lastSeen` | timestamp | Momentul ultimului heartbeat primit. |
 | `health` | `ACTIV` / `SUSPECT` / `CAZUT` | `SUSPECT` dacă `lastSeen` e mai vechi de `--suspect` ms (implicit 4000), `CAZUT` dacă e mai vechi de `--fail` ms (implicit 6000). Orice heartbeat nou îl readuce `ACTIV`. |

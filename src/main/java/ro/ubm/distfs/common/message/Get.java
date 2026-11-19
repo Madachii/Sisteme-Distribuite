@@ -23,6 +23,7 @@ public record Get(UUID fileId) implements Message {
     }
 
     static Get decode(String body) {
-        return new Get(UUID.fromString(body));
+        FieldReader reader = new FieldReader(MessageType.GET, body, 1, 1);
+        return new Get(reader.nextUUID());
     }
 }
