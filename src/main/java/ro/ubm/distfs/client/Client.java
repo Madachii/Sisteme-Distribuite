@@ -1,26 +1,22 @@
 package ro.ubm.distfs.client;
 
 import com.github.f4b6a3.uuid.UuidCreator;
+import ro.ubm.distfs.common.AtomicFile;
+import ro.ubm.distfs.common.Connection;
 import ro.ubm.distfs.common.Protocol;
 import ro.ubm.distfs.common.message.Error;
 import ro.ubm.distfs.common.message.File;
 import ro.ubm.distfs.common.message.Get;
 import ro.ubm.distfs.common.message.Message;
-import ro.ubm.distfs.common.message.Messages;
 import ro.ubm.distfs.common.message.NotFound;
 import ro.ubm.distfs.common.message.Put;
 import ro.ubm.distfs.common.message.Stored;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.UUID;
 
 /**
@@ -45,17 +41,13 @@ public final class Client {
             checksum = Protocol.checksum(fileIn, size);
         }
 
-        try (Socket socket = connect(node);
-             OutputStream out = new BufferedOutputStream(socket.getOutputStream());
-             InputStream in = new BufferedInputStream(socket.getInputStream());
+        try (Connection connection = Connection.open(node);
              InputStream fileIn = Files.newInputStream(file)) {
 
             // TODO: add the node for the replica, from ALLOC
-            Protocol.writeLine(out, new Put(id, name, size, checksum, null));
-            Protocol.copy(fileIn, out, size, null);
-            out.flush();
+            connection.send(new Put(id, name, size, checksum, null), fileIn, size);
 
-            Message reply = readMessage(in);
+            Message reply = connection.receive();
             if (reply instanceof Stored) {
                 return id;
             }
@@ -72,14 +64,11 @@ public final class Client {
      * @return false if the node does not have the file
      */
     public boolean get(InetSocketAddress node, UUID id, Path destination) throws IOException {
-        try (Socket socket = connect(node);
-             OutputStream out = new BufferedOutputStream(socket.getOutputStream());
-             InputStream in = new BufferedInputStream(socket.getInputStream())) {
+        try (Connection connection = Connection.open(node)) {
 
-            Protocol.writeLine(out, new Get(id));
-            out.flush();
+            connection.send(new Get(id));
 
-            Message reply = readMessage(in);
+            Message reply = connection.receive();
             if (reply instanceof NotFound) {
                 return false;
             }
@@ -90,30 +79,8 @@ public final class Client {
             long size = file.size();
             String expected = file.checksum();
 
-            Path parent = destination.toAbsolutePath().getParent();
-            Path temp = Files.createTempFile(parent, ".distfs-", ".part");
-            try {
-                try (OutputStream fileOut = Files.newOutputStream(temp)) {
-                    Protocol.copyVerified(in, fileOut, size, expected);
-                }
-                Files.move(temp, destination, StandardCopyOption.REPLACE_EXISTING);
-            } finally {
-                Files.deleteIfExists(temp);
-            }
+            AtomicFile.write(destination, out -> connection.receiveBody(out, size, expected));
             return true;
         }
-    }
-
-    private static Message readMessage(InputStream in) throws IOException {
-        String line = Protocol.readLine(in);
-        try {
-            return Messages.decode(line);
-        } catch (IllegalArgumentException e) {
-            throw new IOException("Malformed reply: " + line, e);
-        }
-    }
-
-    private static Socket connect(InetSocketAddress node) throws IOException {
-        return new Socket(node.getHostString(), node.getPort());
     }
 }

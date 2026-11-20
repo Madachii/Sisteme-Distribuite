@@ -1,40 +1,32 @@
 package ro.ubm.distfs.node;
 
+import ro.ubm.distfs.common.Connection;
 import ro.ubm.distfs.common.Protocol;
+import ro.ubm.distfs.common.TcpServer;
 import ro.ubm.distfs.common.message.Error;
 import ro.ubm.distfs.common.message.File;
 import ro.ubm.distfs.common.message.Get;
 import ro.ubm.distfs.common.message.Message;
-import ro.ubm.distfs.common.message.Messages;
 import ro.ubm.distfs.common.message.NotFound;
 import ro.ubm.distfs.common.message.Put;
 import ro.ubm.distfs.common.message.Stored;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
-import java.net.MulticastSocket;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.CountDownLatch;
 
 /**
- * A storage node. It opens its two ports, discovers the other nodes over UDP multicast
- * and serves PUT/GET over TCP.
+ * A storage node: the file store, the membership view, discovery and the messages it serves.
+ * The sockets themselves belong to {@link TcpServer} and {@link Discovery}; this class only
+ * decides what a request means.
  */
 public final class StorageNode implements AutoCloseable {
 
     private final NodeConfig config;
     private final Membership membership;
 
-    private ServerSocket tcpSocket;
-    private MulticastSocket udpSocket;
+    private TcpServer tcp;
     private Discovery discovery;
     private FileStore store;
 
@@ -46,16 +38,17 @@ public final class StorageNode implements AutoCloseable {
     public void start() throws IOException {
         try {
             store = new FileStore(Path.of("data", config.self().id().toString()));
-            bindSockets();
-            discovery = new Discovery(config, udpSocket, membership);
+
+            tcp = new TcpServer(config.self().tcpPort(), this::serve);
+            tcp.start();
+
+            discovery = new Discovery(config, membership);
             discovery.start();
         } catch (IOException e) {
             close();
             throw e;
         }
 
-        ServerSocket server = tcpSocket;
-        Thread.ofPlatform().name("tcp-accept").start(() -> acceptLoop(server));
         System.out.println(config);
     }
 
@@ -68,7 +61,9 @@ public final class StorageNode implements AutoCloseable {
         Runtime.getRuntime().addShutdownHook(new Thread(this::close, "node-shutdown"));
         System.out.println("Press Ctrl+C to stop.");
         try {
-            new CountDownLatch(1).await();
+            // Parks this thread: Main passes the exit code of call() straight to System.exit,
+            // so returning here would end the process. Ctrl+C ends it through the hook above.
+            Thread.currentThread().join();
         } catch (InterruptedException e) {
             close();
             throw e;
@@ -79,65 +74,34 @@ public final class StorageNode implements AutoCloseable {
         return membership;
     }
 
-    private void acceptLoop(ServerSocket server) {
-        while (!server.isClosed()) {
-            try {
-                Socket socket = server.accept();
-                Thread.ofVirtual().start(() -> handle(socket));
-            } catch (IOException e) {
-                if (!server.isClosed()) {
-                    System.err.println("[tcp] accept failed: " + e.getMessage());
-                }
-            }
-        }
-    }
-
-    private void handle(Socket socket) {
-        try (socket;
-             InputStream in = new BufferedInputStream(socket.getInputStream());
-             OutputStream out = new BufferedOutputStream(socket.getOutputStream())) {
-
-            Message request;
-            try {
-                request = Messages.decode(Protocol.readLine(in));
-            } catch (IllegalArgumentException e) {
-                error(out, e.getMessage() != null ? e.getMessage() : "Invalid message");
-                return;
-            }
-
-            switch (request) {
-                case Put put -> handlePut(put, in, out);
-                case Get get -> handleGet(get, out);
-                default -> error(out, "Unknown message: " + request.type());
-            }
-            out.flush();
-        } catch (EOFException e) {
-            System.err.println("[tcp] " + socket.getRemoteSocketAddress() + " closed the connection early");
-        } catch (IOException e) {
-            System.err.println("[tcp] " + socket.getRemoteSocketAddress() + ": " + e.getMessage());
+    private void serve(Message request, Connection connection) throws IOException {
+        switch (request) {
+            case Put put -> handlePut(put, connection);
+            case Get get -> handleGet(get, connection);
+            default -> connection.send(new Error("Unknown message: " + request.type()));
         }
     }
 
     // PUT <fileId> <name> <size> <sha256> [<nextHost:port>]
-    private void handlePut(Put put, InputStream in, OutputStream out) throws IOException {
+    private void handlePut(Put put, Connection connection) throws IOException {
         // TODO: forward to put.nextNode() as REPLICATE
 
         try {
-            store.write(put.fileId(), in, put.size(), put.checksum());
+            store.write(put.fileId(), connection.body(), put.size(), put.checksum());
         } catch (IOException e) {
-            error(out, e.getMessage());
+            connection.send(new Error(e.getMessage()));
             return;
         }
 
         System.out.printf("[put] stored %s (%s, %d bytes)%n", put.fileId(), put.name(), put.size());
-        Protocol.writeLine(out, new Stored());
+        connection.send(new Stored());
     }
 
     // GET <fileId>
-    private void handleGet(Get get, OutputStream out) throws IOException {
+    private void handleGet(Get get, Connection connection) throws IOException {
         Path path = store.find(get.fileId());
         if (path == null) {
-            Protocol.writeLine(out, new NotFound());
+            connection.send(new NotFound());
             return;
         }
 
@@ -147,57 +111,10 @@ public final class StorageNode implements AutoCloseable {
             checksum = Protocol.checksum(fileIn, size);
         }
 
-        Protocol.writeLine(out, new File(size, checksum));
         try (InputStream fileIn = Files.newInputStream(path)) {
-            Protocol.copy(fileIn, out, size, null);
+            connection.send(new File(size, checksum), fileIn, size);
         }
         System.out.printf("[get] sent %s (%d bytes)%n", get.fileId(), size);
-    }
-
-    private static void error(OutputStream out, String reason) throws IOException {
-        Protocol.writeLine(out, new Error(reason));
-    }
-
-    private void bindSockets() throws IOException {
-        bindTcpSocket();
-        bindMulticastSocket();
-    }
-
-    private void bindTcpSocket() throws IOException {
-        try {
-            tcpSocket = new ServerSocket();
-            tcpSocket.setReuseAddress(true);
-            tcpSocket.bind(new InetSocketAddress(config.self().tcpPort()), 50);
-        } catch (IOException e) {
-            throw new IOException("Could not bind TCP port " + config.self().tcpPort(), e);
-        }
-    }
-
-    private void bindMulticastSocket() throws IOException {
-        try {
-            udpSocket = new MulticastSocket(null);
-            udpSocket.setReuseAddress(true);
-            udpSocket.bind(new InetSocketAddress(config.multicastPort()));
-        } catch (IOException e) {
-            throw new IOException("Could not bind UDP port " + config.multicastPort(), e);
-        }
-    }
-
-    private void closeSockets() {
-        if (udpSocket != null) {
-            udpSocket.close();
-            udpSocket = null;
-        }
-
-        if (tcpSocket != null) {
-            try {
-                tcpSocket.close();
-            } catch (IOException e) {
-                System.err.println("[tcp] close failed: " + e.getMessage());
-            } finally {
-                tcpSocket = null;
-            }
-        }
     }
 
     @Override
@@ -206,6 +123,15 @@ public final class StorageNode implements AutoCloseable {
             discovery.close();
             discovery = null;
         }
-        closeSockets();
+
+        if (tcp != null) {
+            try {
+                tcp.close();
+            } catch (IOException e) {
+                System.err.println("[tcp] close failed: " + e.getMessage());
+            } finally {
+                tcp = null;
+            }
+        }
     }
 }

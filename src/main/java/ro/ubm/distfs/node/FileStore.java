@@ -1,13 +1,12 @@
 package ro.ubm.distfs.node;
 
+import ro.ubm.distfs.common.AtomicFile;
 import ro.ubm.distfs.common.Protocol;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.UUID;
 
 /**
@@ -25,16 +24,7 @@ public final class FileStore {
      * The file only becomes visible once the checksum matches.
      */
     public void write(UUID id, InputStream in, long size, String checksum) throws IOException {
-        Path temp = Files.createTempFile(root, id + "-", ".part");
-        try {
-            try (OutputStream out = Files.newOutputStream(temp)) {
-                Protocol.copyVerified(in, out, size, checksum);
-            }
-
-            Files.move(temp, pathOf(id), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } finally {
-            Files.deleteIfExists(temp);
-        }
+        AtomicFile.write(pathOf(id), out -> Protocol.copyVerified(in, out, size, checksum));
     }
 
     /**

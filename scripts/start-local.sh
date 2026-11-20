@@ -32,7 +32,7 @@ for i in "${!TCP_PORTS[@]}"; do
     port="${TCP_PORTS[$i]}"
     args=(node --host "$HOST" --tcp-port "$port" --udp-port "$UDP_PORT")
     if [[ "$i" -eq 0 ]]; then
-        args+=(--coordinator)
+        args+=(--role COORDINATOR)
     fi
 
     java -jar "$JAR" "${args[@]}" > "$LOG_DIR/node-$port.log" 2>&1 &

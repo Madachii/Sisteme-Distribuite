@@ -4,12 +4,13 @@ import ro.ubm.distfs.common.NodeInfo;
 import ro.ubm.distfs.common.Role;
 
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Announcement a node multicasts periodically:
  * {@code HEARTBEAT <nodeId> <host> <tcpPort> <role> <freeBytes>}.
  */
-public record Heartbeat(NodeInfo node, Role role, long freeBytes) implements Message {
+public record   Heartbeat(NodeInfo node, Role role, long freeBytes) implements Message {
 
     public Heartbeat {
         Objects.requireNonNull(node, "node");
@@ -39,11 +40,9 @@ public record Heartbeat(NodeInfo node, Role role, long freeBytes) implements Mes
      * @throws IllegalArgumentException if the body is not a well-formed heartbeat
      */
     static Heartbeat decode(String body) {
-        String[] parts = body.split(" ");
-        if (parts.length != 5) {
-            throw new IllegalArgumentException("HEARTBEAT needs 5 fields, got " + parts.length);
-        }
+        FieldReader reader = new FieldReader(MessageType.HEARTBEAT, body, 5, 5);
 
-        return new Heartbeat(NodeInfo.decode(parts, 0), Role.from(parts[3]), Long.parseLong(parts[4]));
+        NodeInfo node = new NodeInfo(reader.nextUUID(), reader.nextString(), reader.nextInt());
+        return new Heartbeat(node, Role.from(reader.nextString()), reader.nextLong());
     }
 }

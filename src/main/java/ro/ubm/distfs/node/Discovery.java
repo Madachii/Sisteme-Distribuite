@@ -19,7 +19,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Multicasts this node's heartbeat and feeds the heartbeats of all nodes into {@link Membership}.
+ * Binds the multicast socket, announces this node's heartbeat on it and feeds the heartbeats
+ * of all nodes into {@link Membership}. It owns its socket, so closing it releases the port
+ * and unblocks the receiver.
  */
 public final class Discovery implements AutoCloseable {
 
@@ -31,22 +33,28 @@ public final class Discovery implements AutoCloseable {
     private static final int MAX_DATAGRAM = 512;
 
     private final NodeConfig config;
-    private final MulticastSocket socket;
     private final Membership membership;
     private final InetSocketAddress group;
 
+    private MulticastSocket socket;
     private ScheduledExecutorService scheduler;
     private Thread receiver;
 
-    public Discovery(NodeConfig config, MulticastSocket socket, Membership membership) {
+    public Discovery(NodeConfig config, Membership membership) {
         this.config = config;
-        this.socket = socket;
         this.membership = membership;
         this.group = new InetSocketAddress(config.multicastGroup(), config.multicastPort());
     }
 
     public void start() throws IOException {
-        joinGroup();
+        socket = bind();
+
+        try {
+            joinGroup();
+        } catch (IOException e) {
+            close();
+            throw e;
+        }
 
         receiver = Thread.ofPlatform().name("discovery-receiver").daemon().start(this::receiveLoop);
 
@@ -56,6 +64,21 @@ public final class Discovery implements AutoCloseable {
         scheduler.scheduleAtFixedRate(this::sendHeartbeat, 0, HEARTBEAT_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
         scheduler.scheduleAtFixedRate(membership::sweep,
                 SWEEP_INTERVAL.toMillis(), SWEEP_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    private MulticastSocket bind() throws IOException {
+        MulticastSocket bound = null;
+        try {
+            bound = new MulticastSocket(null);
+            bound.setReuseAddress(true);
+            bound.bind(new InetSocketAddress(config.multicastPort()));
+            return bound;
+        } catch (IOException e) {
+            if (bound != null) {
+                bound.close();
+            }
+            throw new IOException("Could not bind UDP port " + config.multicastPort(), e);
+        }
     }
 
     // Uses the interface that owns --host, so nodes started on localhost talk over loopback.
@@ -119,6 +142,11 @@ public final class Discovery implements AutoCloseable {
             scheduler.shutdownNow();
             scheduler = null;
         }
+
+        if (socket != null && !socket.isClosed()) {
+            socket.close(); // unblocks the receiver; the field stays non-null for it
+        }
+
         if (receiver != null) {
             receiver.interrupt();
             receiver = null;

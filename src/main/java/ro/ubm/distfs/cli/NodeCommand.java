@@ -33,8 +33,9 @@ public final class NodeCommand implements Callable<Integer> {
             description = "Multicast group for discovery (default: ${DEFAULT-VALUE})")
     private InetAddress multicastGroup;
 
-    @Option(names = "--coordinator", description = "Mark this node as the coordinator (testing only)")
-    private boolean coordinator;
+    @Option(names = "--role", defaultValue = "NODE",
+            description = "Role of this node, one of ${COMPLETION-CANDIDATES} (default: ${DEFAULT-VALUE})")
+    private Role role;
 
     @Option(names = "--suspect", defaultValue = "4000",
             description = "Silence in ms after which a node is marked SUSPECT (default: ${DEFAULT-VALUE})")
@@ -46,10 +47,10 @@ public final class NodeCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws IOException, InterruptedException {
-        Role role = coordinator ? Role.COORDINATOR : Role.NODE;
         NodeConfig config = NodeConfig.create(host, tcpPort, multicastGroup, udpPort, role,
                 Duration.ofMillis(suspectMs), Duration.ofMillis(failMs));
         new StorageNode(config).run();
+
         return 0;
     }
 }

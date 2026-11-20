@@ -16,9 +16,7 @@ public record NotFound() implements Message {
     }
 
     static NotFound decode(String body) {
-        if (!body.isEmpty()) {
-            throw new IllegalArgumentException("NOT_FOUND takes no fields, got: " + body);
-        }
+        FieldReader.expectEmpty(MessageType.NOT_FOUND, body);
         return new NotFound();
     }
 }
